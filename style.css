@@ -171,6 +171,36 @@ main { padding-top: 16px; padding-bottom: 96px; }
 }
 .chip[aria-pressed="true"] { background: var(--acento-suave); border-color: var(--acento); color: var(--acento); font-weight: 700; }
 .barra-filtros .espaco { flex: 1; }
+.chip:disabled { opacity: .4; cursor: default; }
+.chip-forte { background: var(--acento); border-color: var(--acento); color: var(--acento-texto); font-weight: 700; }
+.grupo-modo { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- Ordem das questões e dos temas ---------- */
+.ordem-controles { margin-bottom: 6px; }
+.ordem-controles .barra-filtros { margin-bottom: 8px; }
+details.temas {
+  background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio);
+  padding: 0 14px; margin-bottom: 8px;
+}
+details.temas summary {
+  min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600;
+}
+details.temas[open] { padding-bottom: 12px; }
+.nota-temas { margin: 0 0 8px; font-size: .85rem; color: var(--texto-suave); }
+.lista-temas { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.lista-temas li {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 4px 4px 10px; border: 1px solid var(--borda); border-radius: 10px; background: var(--bg);
+}
+.lista-temas .num { color: var(--ouro); font-weight: 700; font-variant-numeric: tabular-nums; }
+.lista-temas .tema-nome { flex: 1; min-width: 0; }
+.mini {
+  width: 44px; height: 44px; flex: 0 0 44px; border-radius: 8px;
+  border: 1px solid var(--borda); background: var(--superficie); color: var(--acento);
+  font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer;
+}
+.mini:disabled { opacity: .3; cursor: default; }
+.aviso { min-height: 1.4em; margin: 0 0 4px; font-size: .85rem; color: var(--acento); font-weight: 600; }
 
 .questao {
   background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio);

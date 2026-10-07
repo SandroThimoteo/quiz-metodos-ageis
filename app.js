@@ -17,6 +17,7 @@
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* sem armazenamento */ } }
   };
   const CHAVE_DISS = 'qma-dissertativas';
+  const CHAVE_ORDEM = 'qma-ordem';
   const chaveRascunho = (id) => 'qma-rascunho-' + id;
 
   const RESUMO = window.RESUMO || [];
@@ -31,13 +32,20 @@
 
   const estado = {
     aba: 'resumo',
-    filtro: 'todos',
-    embaralhar: false,
-    ordem: {},       // id da questão -> ordem de exibição (índices originais)
-    respostas: {},   // id da questão -> índice original escolhido
-    diss: {},        // id -> { revelada, pontos: [bool], av: 'acertei' | 'parcial' | 'errei' | null }
-    rascunhos: {},   // id -> texto (cópia em memória do rascunho)
-    origem: null     // { aba, elId, rotulo } para o botão "Voltar"
+    filtro: 'todos',     // 'todos' ou número do tema ('01'…'07')
+    modo: 'tema',        // 'tema' = agrupa por tema; 'misturado' = todos os temas misturados
+    ordemTemas: [],      // ordem dos temas escolhida pelo usuário
+    temasAbertos: false, // painel "Ordem dos temas" aberto?
+    aviso: '',           // mensagem curta após embaralhar/reordenar
+    seqObj: OBJ.map((q) => q.id),   // sequência sorteada das objetivas
+    seqDiss: DISS.map((d) => d.id), // sequência sorteada das dissertativas
+    posObj: {},          // id -> número exibido ("Questão N")
+    posDiss: {},
+    ordem: {},           // id da questão -> ordem de exibição das alternativas (índices originais)
+    respostas: {},       // id da questão -> índice original escolhido
+    diss: {},            // id -> { revelada, pontos: [bool], av: 'acertei' | 'parcial' | 'errei' | null }
+    rascunhos: {},       // id -> texto (cópia em memória do rascunho)
+    origem: null         // { aba, elId, rotulo } para o botão "Voltar"
   };
 
   // ---------- Estado persistido das dissertativas ----------
@@ -55,6 +63,98 @@
     });
   }
   function salvarDiss() { LS.set(CHAVE_DISS, JSON.stringify(estado.diss)); }
+
+  // ---------- Ordem das questões e dos temas ----------
+  const temaDe = (item) => item.bloco.slice(0, 2);
+  const TEMAS_PADRAO = [...new Set(OBJ.map(temaDe).concat(DISS.map(temaDe)))].sort();
+  const nomeTema = (t) => { const b = RESUMO.find((x) => x.num === t); return b ? b.titulo : t; };
+
+  function embaralharArray(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // Sorteia uma ordem diferente da atual (quando há mais de um item).
+  function sortearDiferente(atual) {
+    if (atual.length < 2) return atual.slice();
+    let nova;
+    do { nova = embaralharArray(atual); } while (nova.every((x, i) => x === atual[i]));
+    return nova;
+  }
+
+  function carregarOrdem() {
+    let s = {};
+    try { s = JSON.parse(LS.get(CHAVE_ORDEM) || '{}') || {}; } catch (e) { s = {}; }
+    estado.modo = s.modo === 'misturado' ? 'misturado' : 'tema';
+    const salvos = Array.isArray(s.temas) ? s.temas.filter((t) => TEMAS_PADRAO.includes(t)) : [];
+    estado.ordemTemas = salvos.length === TEMAS_PADRAO.length && new Set(salvos).size === salvos.length
+      ? salvos : TEMAS_PADRAO.slice();
+  }
+  function salvarOrdem() { LS.set(CHAVE_ORDEM, JSON.stringify({ modo: estado.modo, temas: estado.ordemTemas })); }
+
+  // No modo "tema", agrupa pelos temas na ordem escolhida; dentro de cada tema
+  // (ou na lista toda, no modo "misturado") segue a sequência sorteada.
+  function ordenar(lista, seq) {
+    const pos = new Map(seq.map((id, i) => [id, i]));
+    return lista.slice().sort((a, b) => {
+      if (estado.modo === 'tema') {
+        const d = estado.ordemTemas.indexOf(temaDe(a)) - estado.ordemTemas.indexOf(temaDe(b));
+        if (d) return d;
+      }
+      return pos.get(a.id) - pos.get(b.id);
+    });
+  }
+
+  function embaralharObjetivas() {
+    estado.seqObj = sortearDiferente(estado.seqObj);
+    OBJ.forEach((q) => { estado.ordem[q.id] = embaralharArray(q.alternativas.map((_, i) => i)); });
+  }
+  function embaralharDissertativas() { estado.seqDiss = sortearDiferente(estado.seqDiss); }
+
+  function moverTema(t, delta) {
+    const i = estado.ordemTemas.indexOf(t);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= estado.ordemTemas.length) return;
+    const nova = estado.ordemTemas.slice();
+    [nova[i], nova[j]] = [nova[j], nova[i]];
+    estado.ordemTemas = nova;
+  }
+
+  function controlesOrdem(aba) {
+    const ultimo = estado.ordemTemas.length - 1;
+    const temas = estado.ordemTemas.map((t, i) => `<li>
+        <span class="num">${t}</span><span class="tema-nome">${esc(nomeTema(t))}</span>
+        <button type="button" class="mini" data-acao="tema-subir" data-tema="${t}" aria-label="Subir o tema ${esc(nomeTema(t))}" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="mini" data-acao="tema-descer" data-tema="${t}" aria-label="Descer o tema ${esc(nomeTema(t))}" ${i === ultimo ? 'disabled' : ''}>↓</button>
+      </li>`).join('');
+    const modoChip = (valor, texto) =>
+      `<button type="button" class="chip" data-acao="modo" data-modo="${valor}" aria-pressed="${estado.modo === valor}">${texto}</button>`;
+
+    return `<div class="ordem-controles">
+      <div class="barra-filtros">
+        <button type="button" class="chip chip-forte" data-acao="embaralhar">Embaralhar</button>
+        <button type="button" class="chip" data-acao="ordem-original">Ordem original</button>
+        <span class="espaco"></span>
+        <span class="grupo-modo" role="group" aria-label="Organização das questões">
+          ${modoChip('tema', 'Agrupar por tema')}${modoChip('misturado', 'Misturar temas')}
+        </span>
+      </div>
+      <details class="temas"${estado.temasAbertos ? ' open' : ''}>
+        <summary>Ordem dos temas</summary>
+        ${estado.modo === 'misturado' ? '<p class="nota-temas">No modo "Misturar temas" a ordem dos temas não é usada. Ao mexer nela, o quiz volta para "Agrupar por tema".</p>' : ''}
+        <ol class="lista-temas">${temas}</ol>
+        <div class="acoes">
+          <button type="button" class="chip" data-acao="temas-sortear">Sortear ordem dos temas</button>
+          <button type="button" class="chip" data-acao="temas-padrao">Ordem padrão (01 → 07)</button>
+        </div>
+      </details>
+      <p class="aviso" role="status">${esc(estado.aviso)}</p>
+    </div>`;
+  }
 
   // ---------- Topo fixo ----------
   function medirTopo() {
@@ -195,19 +295,8 @@
   }
 
   // ---------- Objetivas ----------
-  const blocosObj = [...new Set(OBJ.map((q) => q.bloco))];
-
   function ordemDe(q) {
     return estado.ordem[q.id] || q.alternativas.map((_, i) => i);
-  }
-
-  function embaralharArray(arr) {
-    const a = arr.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
   }
 
   function cartaoObjetiva(q) {
@@ -215,6 +304,7 @@
     const respondida = resp !== undefined;
     const ordem = ordemDe(q);
     const elId = 'q-' + q.id;
+    const n = estado.posObj[q.id];
 
     const alts = ordem.map((orig, pos) => {
       const alt = q.alternativas[orig];
@@ -239,14 +329,14 @@
             <span class="rotulo">${alt.correta ? 'Correta' : 'Errada'}</span><strong>${LETRAS[pos]})</strong>
             ${esc(alt.explicacao)}
             ${orig === resp ? '<span class="escolhida">(sua resposta)</span>' : ''}
-            ${linkResumo(alt.ancora, 'objetivas', elId, String(q.id))}
+            ${linkResumo(alt.ancora, 'objetivas', elId, String(n))}
           </div>`;
         }).join('')}
       </div>`;
     }
 
     return `<article class="questao" id="${elId}" tabindex="-1" aria-labelledby="${elId}-e">
-      <div class="questao-meta"><span>Questão ${q.id} de ${OBJ.length}</span><span class="etiqueta">${esc(q.bloco)}</span></div>
+      <div class="questao-meta"><span>Questão ${n} de ${OBJ.length}</span><span class="etiqueta">${esc(q.bloco)}</span></div>
       <p class="enunciado" id="${elId}-e">${esc(q.enunciado)}</p>
       <ol class="alternativas" aria-label="Alternativas">${alts}</ol>
       ${explicacoes}
@@ -261,23 +351,25 @@
     return `<article class="questao resultado" id="resultado-objetivas">
       <p>Você terminou as ${total} objetivas e acertou ${acertos}.</p>
       <p class="grande">${fmt((acertos / total) * 10)} / 10</p>
-      <button type="button" class="botao" data-acao="refazer">Refazer</button>
+      <button type="button" class="botao" data-acao="refazer">Refazer (com perguntas em nova ordem)</button>
     </article>`;
   }
 
   function renderObjetivas() {
+    const ordenadas = ordenar(OBJ, estado.seqObj);
+    estado.posObj = {};
+    ordenadas.forEach((q, i) => { estado.posObj[q.id] = i + 1; });
+
+    const temasComQuestoes = estado.ordemTemas.filter((t) => OBJ.some((q) => temaDe(q) === t));
     const chips = [`<button type="button" class="chip" data-filtro="todos" aria-pressed="${estado.filtro === 'todos'}">Todos</button>`]
-      .concat(blocosObj.map((b) => `<button type="button" class="chip" data-filtro="${esc(b)}" aria-pressed="${estado.filtro === b}" title="${esc(b)}" aria-label="Bloco ${esc(b)}">${esc(b.slice(0, 2))}</button>`))
+      .concat(temasComQuestoes.map((t) => `<button type="button" class="chip" data-filtro="${t}" aria-pressed="${estado.filtro === t}" title="${esc(nomeTema(t))}" aria-label="Tema ${t}: ${esc(nomeTema(t))}">${t}</button>`))
       .join('');
 
-    const visiveis = OBJ.filter((q) => estado.filtro === 'todos' || q.bloco === estado.filtro);
+    const visiveis = ordenadas.filter((q) => estado.filtro === 'todos' || temaDe(q) === estado.filtro);
 
     painel.objetivas.innerHTML = `
-      <div class="barra-filtros" role="group" aria-label="Filtrar por bloco">
-        ${chips}
-        <span class="espaco"></span>
-        <button type="button" class="chip" data-acao="embaralhar" aria-pressed="${estado.embaralhar}">Embaralhar</button>
-      </div>
+      ${controlesOrdem('objetivas')}
+      <div class="barra-filtros" role="group" aria-label="Filtrar por tema">${chips}</div>
       <div id="lista-objetivas">${visiveis.map(cartaoObjetiva).join('')}</div>
       <div id="resultado-wrap">${cartaoResultado()}</div>`;
   }
@@ -310,25 +402,17 @@
     if (chip) {
       estado.filtro = chip.dataset.filtro;
       renderObjetivas();
-      return;
-    }
-    const acao = e.target.closest('[data-acao]');
-    if (!acao) return;
-    if (acao.dataset.acao === 'embaralhar') {
-      estado.embaralhar = !estado.embaralhar;
-      estado.ordem = {};
-      if (estado.embaralhar) OBJ.forEach((q) => { estado.ordem[q.id] = embaralharArray(q.alternativas.map((_, i) => i)); });
-      renderObjetivas();
-    } else if (acao.dataset.acao === 'refazer') {
-      refazer();
+      const novo = $(`#painel-objetivas [data-filtro="${estado.filtro}"]`);
+      if (novo) novo.focus({ preventScroll: true });
     }
   });
 
   // ---------- Dissertativas ----------
   const PESO = { acertei: 1, parcial: 0.5, errei: 0 };
 
-  function cartaoDissertativa(d, n) {
+  function cartaoDissertativa(d) {
     const s = estado.diss[d.id];
+    const n = estado.posDiss[d.id];
     const elId = 'd-' + d.id;
     const rotulo = d.id;
     const avBtn = (valor, texto) =>
@@ -365,15 +449,18 @@
   }
 
   function renderDissertativas() {
+    const ordenadas = ordenar(DISS, estado.seqDiss);
+    estado.posDiss = {};
+    ordenadas.forEach((d, i) => { estado.posDiss[d.id] = i + 1; });
     painel.dissertativas.innerHTML =
+      controlesOrdem('dissertativas') +
       `<p class="salvo">Seu rascunho fica salvo neste navegador. Depois de ver a resposta, marque os pontos-chave e faça a autoavaliação (Acertei = 1, Parcial = 0,5, Errei = 0).</p>` +
-      DISS.map((d, i) => cartaoDissertativa(d, i + 1)).join('');
+      ordenadas.map(cartaoDissertativa).join('');
   }
 
   function rerenderDiss(id) {
     const d = DISS.find((x) => x.id === id);
-    const n = DISS.indexOf(d) + 1;
-    document.getElementById('d-' + id).outerHTML = cartaoDissertativa(d, n);
+    document.getElementById('d-' + id).outerHTML = cartaoDissertativa(d);
   }
 
   const timersRascunho = {};
@@ -419,6 +506,82 @@
     }
   });
 
+  // ---------- Ações de ordem (Embaralhar, modo, temas, Refazer) ----------
+  function renderQuestoes() {
+    renderObjetivas();
+    renderDissertativas();
+    estado.aviso = '';
+  }
+
+  // Devolve o foco ao botão equivalente depois de redesenhar o painel.
+  function restaurarFoco(b) {
+    let sel = `#painel-${estado.aba} [data-acao="${b.dataset.acao}"]`;
+    if (b.dataset.tema) sel += `[data-tema="${b.dataset.tema}"]`;
+    if (b.dataset.modo) sel += `[data-modo="${b.dataset.modo}"]`;
+    let novo = $(sel);
+    if (novo && novo.disabled) novo = novo.parentElement.querySelector('button:not(:disabled)');
+    if (novo) novo.focus({ preventScroll: true });
+  }
+
+  $('main').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-acao]');
+    if (!b) return;
+    const aba = estado.aba;
+
+    switch (b.dataset.acao) {
+      case 'refazer':
+        refazer();
+        return;
+      case 'embaralhar':
+        if (aba === 'objetivas') embaralharObjetivas(); else embaralharDissertativas();
+        estado.aviso = estado.modo === 'tema'
+          ? 'Perguntas embaralhadas dentro de cada tema.'
+          : 'Perguntas embaralhadas.';
+        break;
+      case 'ordem-original':
+        if (aba === 'objetivas') { estado.seqObj = OBJ.map((q) => q.id); estado.ordem = {}; }
+        else estado.seqDiss = DISS.map((d) => d.id);
+        estado.aviso = 'Perguntas na ordem original.';
+        break;
+      case 'modo':
+        estado.modo = b.dataset.modo === 'misturado' ? 'misturado' : 'tema';
+        salvarOrdem();
+        estado.aviso = estado.modo === 'tema' ? 'Questões agrupadas por tema.' : 'Temas misturados.';
+        break;
+      case 'tema-subir':
+      case 'tema-descer':
+        moverTema(b.dataset.tema, b.dataset.acao === 'tema-subir' ? -1 : 1);
+        estado.modo = 'tema';
+        salvarOrdem();
+        estado.aviso = `Tema ${b.dataset.tema} agora é o ${estado.ordemTemas.indexOf(b.dataset.tema) + 1}º.`;
+        break;
+      case 'temas-sortear':
+        estado.ordemTemas = sortearDiferente(estado.ordemTemas);
+        estado.modo = 'tema';
+        salvarOrdem();
+        estado.aviso = 'Nova ordem dos temas: ' + estado.ordemTemas.join(', ') + '.';
+        break;
+      case 'temas-padrao':
+        estado.ordemTemas = TEMAS_PADRAO.slice();
+        estado.modo = 'tema';
+        salvarOrdem();
+        estado.aviso = 'Temas na ordem padrão.';
+        break;
+      default:
+        return;
+    }
+    renderQuestoes();
+    restaurarFoco(b);
+  });
+
+  // Lembra se o painel "Ordem dos temas" está aberto ("toggle" não borbulha: usa captura).
+  $('main').addEventListener('toggle', (e) => {
+    if (e.target.matches && e.target.matches('details.temas')) {
+      estado.temasAbertos = e.target.open;
+      $$('details.temas').forEach((d) => { if (d !== e.target) d.open = e.target.open; });
+    }
+  }, true);
+
   // ---------- Placar ----------
   function atualizarPlacar() {
     const texto = $('#placar-texto');
@@ -451,12 +614,14 @@
     if (notaFinal !== null) nota.textContent = `Nota: ${fmt(notaFinal)} / 10`;
   }
 
-  // ---------- Refazer ----------
+  // ---------- Refazer: zera e sorteia nova ordem das perguntas ----------
   function refazer() {
     if (estado.aba === 'objetivas') {
       estado.respostas = {};
-      if (estado.embaralhar) OBJ.forEach((q) => { estado.ordem[q.id] = embaralharArray(q.alternativas.map((_, i) => i)); });
+      embaralharObjetivas();
+      estado.aviso = 'Novo teste: perguntas em nova ordem.';
       renderObjetivas();
+      estado.aviso = '';
     } else if (estado.aba === 'dissertativas') {
       const temTexto = DISS.some((d) => estado.rascunhos[d.id].trim());
       if (temTexto && !window.confirm('Apagar suas respostas escritas e a autoavaliação?')) return;
@@ -466,7 +631,10 @@
         LS.del(chaveRascunho(d.id));
       });
       salvarDiss();
+      embaralharDissertativas();
+      estado.aviso = 'Novo teste: perguntas em nova ordem.';
       renderDissertativas();
+      estado.aviso = '';
     }
     atualizarPlacar();
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -505,9 +673,9 @@
 
   // ---------- Início ----------
   carregarDiss();
+  carregarOrdem();
   renderResumo();
-  renderObjetivas();
-  renderDissertativas();
+  renderQuestoes();
   verificarDados();
   aplicarHash();
 })();
