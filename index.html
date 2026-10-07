@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quiz de Métodos Ágeis</title>
+  <meta name="description" content="Resumo e questões de Métodos Ágeis de Desenvolvimento (ADS, USCS): Crise do Software, Scrum, requisitos, histórias de usuário e RUP.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="cabecalho">
+    <div class="container">
+      <p class="sobretitulo">ADS · 4º semestre · USCS</p>
+      <h1>Quiz de Métodos Ágeis</h1>
+      <p class="subtitulo">Resumo da Aula 05 (Prof. Marcos Bussab), 36 questões objetivas e 8 dissertativas.</p>
+    </div>
+  </header>
+
+  <div class="topo-fixo" id="topo-fixo">
+    <div class="container">
+      <nav class="abas" role="tablist" aria-label="Seções do quiz">
+        <button class="aba" role="tab" id="aba-resumo" aria-controls="painel-resumo" aria-selected="true" data-aba="resumo">Resumo</button>
+        <button class="aba" role="tab" id="aba-objetivas" aria-controls="painel-objetivas" aria-selected="false" data-aba="objetivas" tabindex="-1">Objetivas</button>
+        <button class="aba" role="tab" id="aba-dissertativas" aria-controls="painel-dissertativas" aria-selected="false" data-aba="dissertativas" tabindex="-1">Dissertativas</button>
+      </nav>
+
+      <div class="placar" id="placar" hidden>
+        <div class="placar-info">
+          <span id="placar-texto">0 / 0</span>
+          <span class="placar-nota" id="placar-nota" hidden></span>
+        </div>
+        <div class="barra" role="progressbar" aria-label="Progresso" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barra">
+          <div class="barra-preenchida" id="barra-preenchida"></div>
+        </div>
+        <button class="botao botao-secundario" id="btn-refazer" type="button">Refazer</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="container">
+    <section class="painel" id="painel-resumo" role="tabpanel" aria-labelledby="aba-resumo"></section>
+    <section class="painel" id="painel-objetivas" role="tabpanel" aria-labelledby="aba-objetivas" hidden></section>
+    <section class="painel" id="painel-dissertativas" role="tabpanel" aria-labelledby="aba-dissertativas" hidden></section>
+  </main>
+
+  <button class="botao voltar" id="btn-voltar" type="button" hidden></button>
+
+  <footer class="rodape container">
+    Fonte: "Conteúdos complementares de Métodos Ágeis" (Aula 05, Prof. Marcos Bussab), Métodos Ágeis de Desenvolvimento, ADS 4º semestre, USCS.
+  </footer>
+
+  <script src="data/resumo.js"></script>
+  <script src="data/objetivas.js"></script>
+  <script src="data/dissertativas.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
