@@ -6,6 +6,7 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const LETRAS = 'ABCDEFGH';
   const ID_VALIDO = /^[a-z0-9-]+$/;
+  const ABAS = ['resumo', 'objetivas', 'dissertativas'];
   const movReduzido = window.matchMedia('(prefers-reduced-motion: reduce)');
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = (n) => n.toFixed(1).replace('.', ',');
@@ -16,58 +17,15 @@
     set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* sem armazenamento */ } }
   };
-  const CHAVE_DISS = 'qma-dissertativas';
-  const CHAVE_ORDEM = 'qma-ordem';
-  const chaveRascunho = (id) => 'qma-rascunho-' + id;
-
-  const RESUMO = window.RESUMO || [];
-  const OBJ = window.OBJETIVAS || [];
-  const DISS = window.DISSERTATIVAS || [];
 
   const painel = {
+    inicio: $('#painel-inicio'),
     resumo: $('#painel-resumo'),
     objetivas: $('#painel-objetivas'),
     dissertativas: $('#painel-dissertativas')
   };
 
-  const estado = {
-    aba: 'resumo',
-    filtro: 'todos',     // 'todos' ou número do tema ('01'…'07')
-    modo: 'tema',        // 'tema' = agrupa por tema; 'misturado' = todos os temas misturados
-    ordemTemas: [],      // ordem dos temas escolhida pelo usuário
-    temasAbertos: false, // painel "Ordem dos temas" aberto?
-    aviso: '',           // mensagem curta após embaralhar/reordenar
-    seqObj: OBJ.map((q) => q.id),   // sequência sorteada das objetivas
-    seqDiss: DISS.map((d) => d.id), // sequência sorteada das dissertativas
-    posObj: {},          // id -> número exibido ("Questão N")
-    posDiss: {},
-    ordem: {},           // id da questão -> ordem de exibição das alternativas (índices originais)
-    respostas: {},       // id da questão -> índice original escolhido
-    diss: {},            // id -> { revelada, pontos: [bool], av: 'acertei' | 'parcial' | 'errei' | null }
-    rascunhos: {},       // id -> texto (cópia em memória do rascunho)
-    origem: null         // { aba, elId, rotulo } para o botão "Voltar"
-  };
-
-  // ---------- Estado persistido das dissertativas ----------
-  function carregarDiss() {
-    let salvo = {};
-    try { salvo = JSON.parse(LS.get(CHAVE_DISS) || '{}') || {}; } catch (e) { salvo = {}; }
-    DISS.forEach((d) => {
-      const s = salvo[d.id] || {};
-      estado.diss[d.id] = {
-        revelada: !!s.revelada,
-        pontos: d.pontosChave.map((_, i) => !!(s.pontos && s.pontos[i])),
-        av: ['acertei', 'parcial', 'errei'].includes(s.av) ? s.av : null
-      };
-      estado.rascunhos[d.id] = LS.get(chaveRascunho(d.id)) || '';
-    });
-  }
-  function salvarDiss() { LS.set(CHAVE_DISS, JSON.stringify(estado.diss)); }
-
-  // ---------- Ordem das questões e dos temas ----------
   const temaDe = (item) => item.bloco.slice(0, 2);
-  const TEMAS_PADRAO = [...new Set(OBJ.map(temaDe).concat(DISS.map(temaDe)))].sort();
-  const nomeTema = (t) => { const b = RESUMO.find((x) => x.num === t); return b ? b.titulo : t; };
 
   function embaralharArray(arr) {
     const a = arr.slice();
@@ -86,23 +44,85 @@
     return nova;
   }
 
-  function carregarOrdem() {
-    let s = {};
-    try { s = JSON.parse(LS.get(CHAVE_ORDEM) || '{}') || {}; } catch (e) { s = {}; }
-    estado.modo = s.modo === 'misturado' ? 'misturado' : 'tema';
-    const salvos = Array.isArray(s.temas) ? s.temas.filter((t) => TEMAS_PADRAO.includes(t)) : [];
-    estado.ordemTemas = salvos.length === TEMAS_PADRAO.length && new Set(salvos).size === salvos.length
-      ? salvos : TEMAS_PADRAO.slice();
-  }
-  function salvarOrdem() { LS.set(CHAVE_ORDEM, JSON.stringify({ modo: estado.modo, temas: estado.ordemTemas })); }
+  // ---------- Matérias: cada uma tem seu próprio contexto (dados, progresso, ordem) ----------
+  const MATERIAS = Object.values(window.MATERIAS || {}).filter((m) => m.resumo && m.objetivas && m.dissertativas);
 
+  function criarContexto(M) {
+    const ids = new Set();
+    M.resumo.forEach((b) => { ids.add(b.id); b.secoes.forEach((s) => ids.add(s.id)); });
+    const C = {
+      M,
+      id: M.id,
+      RESUMO: M.resumo,
+      OBJ: M.objetivas,
+      DISS: M.dissertativas,
+      ids,
+      TEMAS_PADRAO: [...new Set(M.objetivas.map(temaDe).concat(M.dissertativas.map(temaDe)))].sort(),
+      chave: {
+        diss: M.prefixo + '-dissertativas',
+        ordem: M.prefixo + '-ordem',
+        rascunho: (id) => M.prefixo + '-rascunho-' + id
+      },
+      filtro: 'todos',     // 'todos' ou número do tema ('01'…)
+      modo: 'tema',        // 'tema' = agrupa por tema; 'misturado' = temas misturados
+      ordemTemas: [],
+      temasAbertos: false,
+      aviso: '',
+      seqObj: M.objetivas.map((q) => q.id),
+      seqDiss: M.dissertativas.map((d) => d.id),
+      posObj: {},
+      posDiss: {},
+      ordem: {},           // id da questão -> ordem de exibição das alternativas
+      respostas: {},       // id da questão -> índice original escolhido
+      diss: {},            // id -> { revelada, pontos: [bool], av }
+      rascunhos: {}
+    };
+    carregarDiss(C);
+    carregarOrdem(C);
+    return C;
+  }
+
+  function carregarDiss(C) {
+    let salvo = {};
+    try { salvo = JSON.parse(LS.get(C.chave.diss) || '{}') || {}; } catch (e) { salvo = {}; }
+    C.DISS.forEach((d) => {
+      const s = salvo[d.id] || {};
+      C.diss[d.id] = {
+        revelada: !!s.revelada,
+        pontos: d.pontosChave.map((_, i) => !!(s.pontos && s.pontos[i])),
+        av: ['acertei', 'parcial', 'errei'].includes(s.av) ? s.av : null
+      };
+      C.rascunhos[d.id] = LS.get(C.chave.rascunho(d.id)) || '';
+    });
+  }
+  function salvarDiss() { LS.set(C.chave.diss, JSON.stringify(C.diss)); }
+
+  function carregarOrdem(C) {
+    let s = {};
+    try { s = JSON.parse(LS.get(C.chave.ordem) || '{}') || {}; } catch (e) { s = {}; }
+    C.modo = s.modo === 'misturado' ? 'misturado' : 'tema';
+    const salvos = Array.isArray(s.temas) ? s.temas.filter((t) => C.TEMAS_PADRAO.includes(t)) : [];
+    C.ordemTemas = salvos.length === C.TEMAS_PADRAO.length && new Set(salvos).size === salvos.length
+      ? salvos : C.TEMAS_PADRAO.slice();
+  }
+  function salvarOrdem() { LS.set(C.chave.ordem, JSON.stringify({ modo: C.modo, temas: C.ordemTemas })); }
+
+  const CONTEXTOS = {};
+  MATERIAS.forEach((M) => { CONTEXTOS[M.id] = criarContexto(M); });
+
+  let C = null;                              // contexto da matéria aberta
+  const G = { aba: 'inicio', origem: null }; // estado global da navegação
+
+  const nomeTema = (t) => { const b = C.RESUMO.find((x) => x.num === t); return b ? b.titulo : t; };
+
+  // ---------- Ordem das questões e dos temas ----------
   // No modo "tema", agrupa pelos temas na ordem escolhida; dentro de cada tema
   // (ou na lista toda, no modo "misturado") segue a sequência sorteada.
   function ordenar(lista, seq) {
     const pos = new Map(seq.map((id, i) => [id, i]));
     return lista.slice().sort((a, b) => {
-      if (estado.modo === 'tema') {
-        const d = estado.ordemTemas.indexOf(temaDe(a)) - estado.ordemTemas.indexOf(temaDe(b));
+      if (C.modo === 'tema') {
+        const d = C.ordemTemas.indexOf(temaDe(a)) - C.ordemTemas.indexOf(temaDe(b));
         if (d) return d;
       }
       return pos.get(a.id) - pos.get(b.id);
@@ -110,29 +130,30 @@
   }
 
   function embaralharObjetivas() {
-    estado.seqObj = sortearDiferente(estado.seqObj);
-    OBJ.forEach((q) => { estado.ordem[q.id] = embaralharArray(q.alternativas.map((_, i) => i)); });
+    C.seqObj = sortearDiferente(C.seqObj);
+    C.OBJ.forEach((q) => { C.ordem[q.id] = embaralharArray(q.alternativas.map((_, i) => i)); });
   }
-  function embaralharDissertativas() { estado.seqDiss = sortearDiferente(estado.seqDiss); }
+  function embaralharDissertativas() { C.seqDiss = sortearDiferente(C.seqDiss); }
 
   function moverTema(t, delta) {
-    const i = estado.ordemTemas.indexOf(t);
+    const i = C.ordemTemas.indexOf(t);
     const j = i + delta;
-    if (i < 0 || j < 0 || j >= estado.ordemTemas.length) return;
-    const nova = estado.ordemTemas.slice();
+    if (i < 0 || j < 0 || j >= C.ordemTemas.length) return;
+    const nova = C.ordemTemas.slice();
     [nova[i], nova[j]] = [nova[j], nova[i]];
-    estado.ordemTemas = nova;
+    C.ordemTemas = nova;
   }
 
-  function controlesOrdem(aba) {
-    const ultimo = estado.ordemTemas.length - 1;
-    const temas = estado.ordemTemas.map((t, i) => `<li>
+  function controlesOrdem() {
+    const ultimo = C.ordemTemas.length - 1;
+    const temas = C.ordemTemas.map((t, i) => `<li>
         <span class="num">${t}</span><span class="tema-nome">${esc(nomeTema(t))}</span>
         <button type="button" class="mini" data-acao="tema-subir" data-tema="${t}" aria-label="Subir o tema ${esc(nomeTema(t))}" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button type="button" class="mini" data-acao="tema-descer" data-tema="${t}" aria-label="Descer o tema ${esc(nomeTema(t))}" ${i === ultimo ? 'disabled' : ''}>↓</button>
       </li>`).join('');
     const modoChip = (valor, texto) =>
-      `<button type="button" class="chip" data-acao="modo" data-modo="${valor}" aria-pressed="${estado.modo === valor}">${texto}</button>`;
+      `<button type="button" class="chip" data-acao="modo" data-modo="${valor}" aria-pressed="${C.modo === valor}">${texto}</button>`;
+    const primeiro = C.TEMAS_PADRAO[0], fim = C.TEMAS_PADRAO[C.TEMAS_PADRAO.length - 1];
 
     return `<div class="ordem-controles">
       <div class="barra-filtros">
@@ -143,22 +164,23 @@
           ${modoChip('tema', 'Agrupar por tema')}${modoChip('misturado', 'Misturar temas')}
         </span>
       </div>
-      <details class="temas"${estado.temasAbertos ? ' open' : ''}>
+      <details class="temas"${C.temasAbertos ? ' open' : ''}>
         <summary>Ordem dos temas</summary>
-        ${estado.modo === 'misturado' ? '<p class="nota-temas">No modo "Misturar temas" a ordem dos temas não é usada. Ao mexer nela, o quiz volta para "Agrupar por tema".</p>' : ''}
+        ${C.modo === 'misturado' ? '<p class="nota-temas">No modo "Misturar temas" a ordem dos temas não é usada. Ao mexer nela, o quiz volta para "Agrupar por tema".</p>' : ''}
         <ol class="lista-temas">${temas}</ol>
         <div class="acoes">
           <button type="button" class="chip" data-acao="temas-sortear">Sortear ordem dos temas</button>
-          <button type="button" class="chip" data-acao="temas-padrao">Ordem padrão (01 → 07)</button>
+          <button type="button" class="chip" data-acao="temas-padrao">Ordem padrão (${primeiro} → ${fim})</button>
         </div>
       </details>
-      <p class="aviso" role="status">${esc(estado.aviso)}</p>
+      <p class="aviso" role="status">${esc(C.aviso)}</p>
     </div>`;
   }
 
   // ---------- Topo fixo ----------
   function medirTopo() {
-    document.documentElement.style.setProperty('--topo', $('#topo-fixo').offsetHeight + 'px');
+    const topo = $('#topo-fixo');
+    document.documentElement.style.setProperty('--topo', (topo.hidden ? 0 : topo.offsetHeight) + 'px');
   }
 
   function rolarAte(el) {
@@ -181,10 +203,94 @@
     const url = location.pathname + location.search + (h ? '#' + h : '');
     try { history.replaceState(null, '', url); } catch (e) { /* file:// em alguns navegadores */ }
   }
+  const hashDaAba = (aba) => (aba === 'resumo' ? C.id : C.id + '/' + aba);
+
+  // ---------- Tela inicial e troca de matéria ----------
+  function renderInicio() {
+    const cartoes = MATERIAS.map((M) => {
+      const X = CONTEXTOS[M.id];
+      const blocos = X.RESUMO.filter((b) => b.num).length;
+      const respondidas = Object.keys(X.respostas).length;
+      const avaliadas = X.DISS.filter((d) => X.diss[d.id].av).length;
+      const progresso = respondidas || avaliadas
+        ? `<p class="cm-progresso">Seu progresso: ${respondidas}/${X.OBJ.length} objetivas nesta visita · ${avaliadas}/${X.DISS.length} dissertativas avaliadas</p>`
+        : '';
+      return `<a class="cartao-materia" href="#${M.id}" data-ir-materia="${M.id}" data-materia="${M.id}">
+        ${M.prova ? `<span class="cm-prova">Prova ${esc(M.prova)}</span>` : ''}
+        <h2>${esc(M.titulo)}</h2>
+        <p class="cm-prof">${esc(M.professor)}</p>
+        <p>${esc(M.descricao)}</p>
+        <p class="cm-numeros">Resumo em ${blocos} blocos · ${X.OBJ.length} objetivas · ${X.DISS.length} dissertativas</p>
+        ${progresso}
+        <span class="cm-entrar">Estudar ${esc(M.curto)} →</span>
+      </a>`;
+    }).join('');
+    painel.inicio.innerHTML = `
+      <p class="inicio-intro">Cada matéria tem o seu próprio resumo, questões e progresso. Você pode trocar de matéria a qualquer momento pelo botão <strong>Trocar matéria</strong>, no topo.</p>
+      <div class="materias">${cartoes}</div>`;
+  }
+
+  function atualizarCabecalho() {
+    const trocar = $('#btn-trocar');
+    if (C && G.aba !== 'inicio') {
+      const M = C.M;
+      document.body.dataset.materia = M.id;
+      $('#sobretitulo').textContent = 'ADS · USCS · ' + M.professor + (M.prova ? ' · Prova ' + M.prova : '');
+      $('#titulo').textContent = M.titulo;
+      $('#subtitulo').textContent = `Resumo, ${C.OBJ.length} questões objetivas e ${C.DISS.length} dissertativas.`;
+      $('#rodape').textContent = 'Fonte: ' + M.fonte;
+      document.title = M.curto + ' · Quiz de Estudos';
+      trocar.hidden = false;
+    } else {
+      delete document.body.dataset.materia;
+      $('#sobretitulo').textContent = 'ADS · 4º semestre · USCS';
+      $('#titulo').textContent = 'Quiz de Estudos';
+      $('#subtitulo').textContent = 'Escolha a matéria que você quer estudar.';
+      $('#rodape').textContent = 'Material de estudo das disciplinas de ADS, 4º semestre, USCS.';
+      document.title = 'Quiz de Estudos · ADS USCS';
+      trocar.hidden = true;
+    }
+  }
+
+  function irInicio(opcoes = {}) {
+    G.aba = 'inicio';
+    esconderVoltar();
+    renderInicio();
+    Object.entries(painel).forEach(([k, p]) => { p.hidden = k !== 'inicio'; });
+    $('#topo-fixo').hidden = true;
+    atualizarCabecalho();
+    medirTopo();
+    if (opcoes.manual) definirHash('');
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  function abrirMateria(id) {
+    if (C && C.id === id) return;
+    C = CONTEXTOS[id];
+    esconderVoltar();
+    renderResumo();
+    renderQuestoes();
+  }
+
+  $('#btn-trocar').addEventListener('click', () => {
+    irInicio({ manual: true });
+    const cartao = C && $(`[data-ir-materia="${C.id}"]`);
+    if (cartao) cartao.focus();
+  });
+
+  painel.inicio.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-ir-materia]');
+    if (!a) return;
+    e.preventDefault();
+    abrirMateria(a.dataset.irMateria);
+    mostrarAba('resumo', { manual: true });
+    $('#aba-resumo').focus({ preventScroll: true });
+  });
 
   // ---------- Abas ----------
   function mostrarAba(nome, opcoes = {}) {
-    estado.aba = nome;
+    G.aba = nome;
+    $('#topo-fixo').hidden = false;
     $$('.aba').forEach((b) => {
       const ativa = b.dataset.aba === nome;
       b.setAttribute('aria-selected', String(ativa));
@@ -192,11 +298,12 @@
     });
     Object.entries(painel).forEach(([k, p]) => { p.hidden = k !== nome; });
     $('#placar').hidden = nome === 'resumo';
+    atualizarCabecalho();
     atualizarPlacar();
     medirTopo();
     if (opcoes.manual) {
       esconderVoltar();
-      definirHash(nome === 'resumo' ? '' : nome);
+      definirHash(hashDaAba(nome));
       window.scrollTo({ top: 0, behavior: 'auto' });
     }
   }
@@ -225,7 +332,7 @@
     const alvo = document.getElementById(ancora);
     if (!alvo || !painel.resumo.contains(alvo)) return false;
     mostrarAba('resumo');
-    estado.origem = origem || null;
+    G.origem = origem || null;
     atualizarVoltar();
     definirHash(ancora);
     rolarAte(alvo);
@@ -236,21 +343,21 @@
 
   function atualizarVoltar() {
     const btn = $('#btn-voltar');
-    if (estado.origem) {
-      btn.textContent = '← Voltar para a questão ' + estado.origem.rotulo;
+    if (G.origem) {
+      btn.textContent = '← Voltar para a questão ' + G.origem.rotulo;
       btn.hidden = false;
     } else {
       btn.hidden = true;
     }
   }
-  function esconderVoltar() { estado.origem = null; atualizarVoltar(); }
+  function esconderVoltar() { G.origem = null; atualizarVoltar(); }
 
   $('#btn-voltar').addEventListener('click', () => {
-    const o = estado.origem;
+    const o = G.origem;
     if (!o) return;
     esconderVoltar();
     mostrarAba(o.aba);
-    definirHash(o.aba);
+    definirHash(hashDaAba(o.aba));
     const el = document.getElementById(o.elId);
     if (el) {
       rolarAte(el);
@@ -276,11 +383,11 @@
   // ---------- Resumo ----------
   function renderResumo() {
     const sumario = `<nav class="sumario" aria-label="Sumário do resumo"><h2>Sumário</h2><ol>` +
-      RESUMO.map((b) => `<li><a href="#${b.id}" data-ancora="${b.id}">` +
+      C.RESUMO.map((b) => `<li><a href="#${b.id}" data-ancora="${b.id}">` +
         (b.num ? `<span class="num">${b.num}</span>` : '') + `${esc(b.titulo)}</a></li>`).join('') +
       `</ol></nav>`;
 
-    const blocos = RESUMO.map((b) => `
+    const blocos = C.RESUMO.map((b) => `
       <article class="bloco">
         <h2 class="bloco-titulo" id="${b.id}" tabindex="-1">${b.num ? `<span class="num">${b.num}</span>` : ''}${esc(b.titulo)}</h2>
         ${b.secoes.map((s) => `
@@ -296,15 +403,15 @@
 
   // ---------- Objetivas ----------
   function ordemDe(q) {
-    return estado.ordem[q.id] || q.alternativas.map((_, i) => i);
+    return C.ordem[q.id] || q.alternativas.map((_, i) => i);
   }
 
   function cartaoObjetiva(q) {
-    const resp = estado.respostas[q.id];
+    const resp = C.respostas[q.id];
     const respondida = resp !== undefined;
     const ordem = ordemDe(q);
     const elId = 'q-' + q.id;
-    const n = estado.posObj[q.id];
+    const n = C.posObj[q.id];
 
     const alts = ordem.map((orig, pos) => {
       const alt = q.alternativas[orig];
@@ -336,53 +443,54 @@
     }
 
     return `<article class="questao" id="${elId}" tabindex="-1" aria-labelledby="${elId}-e">
-      <div class="questao-meta"><span>Questão ${n} de ${OBJ.length}</span><span class="etiqueta">${esc(q.bloco)}</span></div>
+      <div class="questao-meta"><span>Questão ${n} de ${C.OBJ.length}</span><span class="etiqueta">${esc(q.bloco)}</span></div>
+      ${q.origem ? `<p class="origem">${esc(q.origem)}</p>` : ''}
       <p class="enunciado" id="${elId}-e">${esc(q.enunciado)}</p>
       <ol class="alternativas" aria-label="Alternativas">${alts}</ol>
       ${explicacoes}
     </article>`;
   }
 
+  function contarAcertos() {
+    return C.OBJ.reduce((n, q) => n + (C.respostas[q.id] !== undefined && q.alternativas[C.respostas[q.id]].correta ? 1 : 0), 0);
+  }
+
   function cartaoResultado() {
-    const total = OBJ.length;
-    const respondidas = Object.keys(estado.respostas).length;
+    const total = C.OBJ.length;
+    const respondidas = Object.keys(C.respostas).length;
     if (respondidas < total) return '';
     const acertos = contarAcertos();
     return `<article class="questao resultado" id="resultado-objetivas">
-      <p>Você terminou as ${total} objetivas e acertou ${acertos}.</p>
+      <p>Você terminou as ${total} objetivas de ${esc(C.M.curto)} e acertou ${acertos}.</p>
       <p class="grande">${fmt((acertos / total) * 10)} / 10</p>
       <button type="button" class="botao" data-acao="refazer">Refazer (com perguntas em nova ordem)</button>
     </article>`;
   }
 
   function renderObjetivas() {
-    const ordenadas = ordenar(OBJ, estado.seqObj);
-    estado.posObj = {};
-    ordenadas.forEach((q, i) => { estado.posObj[q.id] = i + 1; });
+    const ordenadas = ordenar(C.OBJ, C.seqObj);
+    C.posObj = {};
+    ordenadas.forEach((q, i) => { C.posObj[q.id] = i + 1; });
 
-    const temasComQuestoes = estado.ordemTemas.filter((t) => OBJ.some((q) => temaDe(q) === t));
-    const chips = [`<button type="button" class="chip" data-filtro="todos" aria-pressed="${estado.filtro === 'todos'}">Todos</button>`]
-      .concat(temasComQuestoes.map((t) => `<button type="button" class="chip" data-filtro="${t}" aria-pressed="${estado.filtro === t}" title="${esc(nomeTema(t))}" aria-label="Tema ${t}: ${esc(nomeTema(t))}">${t}</button>`))
+    const temasComQuestoes = C.ordemTemas.filter((t) => C.OBJ.some((q) => temaDe(q) === t));
+    const chips = [`<button type="button" class="chip" data-filtro="todos" aria-pressed="${C.filtro === 'todos'}">Todos</button>`]
+      .concat(temasComQuestoes.map((t) => `<button type="button" class="chip" data-filtro="${t}" aria-pressed="${C.filtro === t}" title="${esc(nomeTema(t))}" aria-label="Tema ${t}: ${esc(nomeTema(t))}">${t}</button>`))
       .join('');
 
-    const visiveis = ordenadas.filter((q) => estado.filtro === 'todos' || temaDe(q) === estado.filtro);
+    const visiveis = ordenadas.filter((q) => C.filtro === 'todos' || temaDe(q) === C.filtro);
 
     painel.objetivas.innerHTML = `
-      ${controlesOrdem('objetivas')}
+      ${controlesOrdem()}
       <div class="barra-filtros" role="group" aria-label="Filtrar por tema">${chips}</div>
       <div id="lista-objetivas">${visiveis.map(cartaoObjetiva).join('')}</div>
       <div id="resultado-wrap">${cartaoResultado()}</div>`;
   }
 
-  function contarAcertos() {
-    return OBJ.reduce((n, q) => n + (estado.respostas[q.id] !== undefined && q.alternativas[estado.respostas[q.id]].correta ? 1 : 0), 0);
-  }
-
   function responder(qid, i) {
-    if (estado.respostas[qid] !== undefined) return;
-    const q = OBJ.find((x) => x.id === qid);
+    if (C.respostas[qid] !== undefined) return;
+    const q = C.OBJ.find((x) => x.id === qid);
     if (!q) return;
-    estado.respostas[qid] = i;
+    C.respostas[qid] = i;
     const el = document.getElementById('q-' + qid);
     el.outerHTML = cartaoObjetiva(q);
     const novo = document.getElementById('q-' + qid);
@@ -400,9 +508,9 @@
     }
     const chip = e.target.closest('[data-filtro]');
     if (chip) {
-      estado.filtro = chip.dataset.filtro;
+      C.filtro = chip.dataset.filtro;
       renderObjetivas();
-      const novo = $(`#painel-objetivas [data-filtro="${estado.filtro}"]`);
+      const novo = $(`#painel-objetivas [data-filtro="${C.filtro}"]`);
       if (novo) novo.focus({ preventScroll: true });
     }
   });
@@ -411,8 +519,8 @@
   const PESO = { acertei: 1, parcial: 0.5, errei: 0 };
 
   function cartaoDissertativa(d) {
-    const s = estado.diss[d.id];
-    const n = estado.posDiss[d.id];
+    const s = C.diss[d.id];
+    const n = C.posDiss[d.id];
     const elId = 'd-' + d.id;
     const rotulo = d.id;
     const avBtn = (valor, texto) =>
@@ -436,10 +544,11 @@
       </div>` : '';
 
     return `<article class="questao" id="${elId}" tabindex="-1" aria-labelledby="${elId}-e">
-      <div class="questao-meta"><span>Dissertativa ${n} de ${DISS.length} · ${d.id}</span><span class="etiqueta">${esc(d.bloco)}</span></div>
+      <div class="questao-meta"><span>Dissertativa ${n} de ${C.DISS.length} · ${d.id}</span><span class="etiqueta">${esc(d.bloco)}</span></div>
+      ${d.origem ? `<p class="origem">${esc(d.origem)}</p>` : ''}
       <p class="enunciado" id="${elId}-e">${esc(d.enunciado)}</p>
       <label class="sr-only" for="resp-${d.id}">Sua resposta para ${d.id}</label>
-      <textarea id="resp-${d.id}" data-rascunho="${d.id}" placeholder="Escreva sua resposta aqui…">${esc(estado.rascunhos[d.id])}</textarea>
+      <textarea id="resp-${d.id}" data-rascunho="${d.id}" placeholder="Escreva sua resposta aqui…">${esc(C.rascunhos[d.id])}</textarea>
       <div class="acoes">
         <button type="button" class="botao ${s.revelada ? 'botao-secundario' : ''}" data-ver="${d.id}" aria-expanded="${s.revelada}">${s.revelada ? 'Ocultar resposta' : 'Ver resposta'}</button>
         <span class="salvo" id="salvo-${d.id}" aria-live="polite"></span>
@@ -449,17 +558,17 @@
   }
 
   function renderDissertativas() {
-    const ordenadas = ordenar(DISS, estado.seqDiss);
-    estado.posDiss = {};
-    ordenadas.forEach((d, i) => { estado.posDiss[d.id] = i + 1; });
+    const ordenadas = ordenar(C.DISS, C.seqDiss);
+    C.posDiss = {};
+    ordenadas.forEach((d, i) => { C.posDiss[d.id] = i + 1; });
     painel.dissertativas.innerHTML =
-      controlesOrdem('dissertativas') +
+      controlesOrdem() +
       `<p class="salvo">Seu rascunho fica salvo neste navegador. Depois de ver a resposta, marque os pontos-chave e faça a autoavaliação (Acertei = 1, Parcial = 0,5, Errei = 0).</p>` +
       ordenadas.map(cartaoDissertativa).join('');
   }
 
   function rerenderDiss(id) {
-    const d = DISS.find((x) => x.id === id);
+    const d = C.DISS.find((x) => x.id === id);
     document.getElementById('d-' + id).outerHTML = cartaoDissertativa(d);
   }
 
@@ -468,11 +577,13 @@
     const t = e.target.closest('textarea[data-rascunho]');
     if (!t) return;
     const id = t.dataset.rascunho;
-    estado.rascunhos[id] = t.value;
-    clearTimeout(timersRascunho[id]);
-    timersRascunho[id] = setTimeout(() => {
-      const ok = LS.set(chaveRascunho(id), t.value);
-      const aviso = document.getElementById('salvo-' + id);
+    const X = C; // a matéria pode mudar antes do salvamento atrasado
+    X.rascunhos[id] = t.value;
+    const chave = X.id + ':' + id;
+    clearTimeout(timersRascunho[chave]);
+    timersRascunho[chave] = setTimeout(() => {
+      const ok = LS.set(X.chave.rascunho(id), X.rascunhos[id]);
+      const aviso = X === C && document.getElementById('salvo-' + id);
       if (aviso) aviso.textContent = ok ? 'Rascunho salvo' : '';
     }, 400);
   });
@@ -480,7 +591,7 @@
   painel.dissertativas.addEventListener('change', (e) => {
     const c = e.target.closest('input[data-ponto]');
     if (!c) return;
-    estado.diss[c.dataset.ponto].pontos[Number(c.dataset.i)] = c.checked;
+    C.diss[c.dataset.ponto].pontos[Number(c.dataset.i)] = c.checked;
     salvarDiss();
   });
 
@@ -488,7 +599,7 @@
     const ver = e.target.closest('[data-ver]');
     if (ver) {
       const id = ver.dataset.ver;
-      estado.diss[id].revelada = !estado.diss[id].revelada;
+      C.diss[id].revelada = !C.diss[id].revelada;
       salvarDiss();
       rerenderDiss(id);
       const btn = $(`[data-ver="${id}"]`);
@@ -498,7 +609,7 @@
     const av = e.target.closest('[data-av]');
     if (av) {
       const id = av.dataset.d;
-      const s = estado.diss[id];
+      const s = C.diss[id];
       s.av = s.av === av.dataset.av ? null : av.dataset.av; // clicar de novo desmarca
       salvarDiss();
       $$(`[data-av][data-d="${id}"]`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.av === s.av)));
@@ -510,12 +621,12 @@
   function renderQuestoes() {
     renderObjetivas();
     renderDissertativas();
-    estado.aviso = '';
+    C.aviso = '';
   }
 
   // Devolve o foco ao botão equivalente depois de redesenhar o painel.
   function restaurarFoco(b) {
-    let sel = `#painel-${estado.aba} [data-acao="${b.dataset.acao}"]`;
+    let sel = `#painel-${G.aba} [data-acao="${b.dataset.acao}"]`;
     if (b.dataset.tema) sel += `[data-tema="${b.dataset.tema}"]`;
     if (b.dataset.modo) sel += `[data-modo="${b.dataset.modo}"]`;
     let novo = $(sel);
@@ -525,8 +636,8 @@
 
   $('main').addEventListener('click', (e) => {
     const b = e.target.closest('[data-acao]');
-    if (!b) return;
-    const aba = estado.aba;
+    if (!b || !C) return;
+    const aba = G.aba;
 
     switch (b.dataset.acao) {
       case 'refazer':
@@ -534,38 +645,36 @@
         return;
       case 'embaralhar':
         if (aba === 'objetivas') embaralharObjetivas(); else embaralharDissertativas();
-        estado.aviso = estado.modo === 'tema'
-          ? 'Perguntas embaralhadas dentro de cada tema.'
-          : 'Perguntas embaralhadas.';
+        C.aviso = C.modo === 'tema' ? 'Perguntas embaralhadas dentro de cada tema.' : 'Perguntas embaralhadas.';
         break;
       case 'ordem-original':
-        if (aba === 'objetivas') { estado.seqObj = OBJ.map((q) => q.id); estado.ordem = {}; }
-        else estado.seqDiss = DISS.map((d) => d.id);
-        estado.aviso = 'Perguntas na ordem original.';
+        if (aba === 'objetivas') { C.seqObj = C.OBJ.map((q) => q.id); C.ordem = {}; }
+        else C.seqDiss = C.DISS.map((d) => d.id);
+        C.aviso = 'Perguntas na ordem original.';
         break;
       case 'modo':
-        estado.modo = b.dataset.modo === 'misturado' ? 'misturado' : 'tema';
+        C.modo = b.dataset.modo === 'misturado' ? 'misturado' : 'tema';
         salvarOrdem();
-        estado.aviso = estado.modo === 'tema' ? 'Questões agrupadas por tema.' : 'Temas misturados.';
+        C.aviso = C.modo === 'tema' ? 'Questões agrupadas por tema.' : 'Temas misturados.';
         break;
       case 'tema-subir':
       case 'tema-descer':
         moverTema(b.dataset.tema, b.dataset.acao === 'tema-subir' ? -1 : 1);
-        estado.modo = 'tema';
+        C.modo = 'tema';
         salvarOrdem();
-        estado.aviso = `Tema ${b.dataset.tema} agora é o ${estado.ordemTemas.indexOf(b.dataset.tema) + 1}º.`;
+        C.aviso = `Tema ${b.dataset.tema} agora é o ${C.ordemTemas.indexOf(b.dataset.tema) + 1}º.`;
         break;
       case 'temas-sortear':
-        estado.ordemTemas = sortearDiferente(estado.ordemTemas);
-        estado.modo = 'tema';
+        C.ordemTemas = sortearDiferente(C.ordemTemas);
+        C.modo = 'tema';
         salvarOrdem();
-        estado.aviso = 'Nova ordem dos temas: ' + estado.ordemTemas.join(', ') + '.';
+        C.aviso = 'Nova ordem dos temas: ' + C.ordemTemas.join(', ') + '.';
         break;
       case 'temas-padrao':
-        estado.ordemTemas = TEMAS_PADRAO.slice();
-        estado.modo = 'tema';
+        C.ordemTemas = C.TEMAS_PADRAO.slice();
+        C.modo = 'tema';
         salvarOrdem();
-        estado.aviso = 'Temas na ordem padrão.';
+        C.aviso = 'Temas na ordem padrão.';
         break;
       default:
         return;
@@ -576,8 +685,8 @@
 
   // Lembra se o painel "Ordem dos temas" está aberto ("toggle" não borbulha: usa captura).
   $('main').addEventListener('toggle', (e) => {
-    if (e.target.matches && e.target.matches('details.temas')) {
-      estado.temasAbertos = e.target.open;
+    if (C && e.target.matches && e.target.matches('details.temas')) {
+      C.temasAbertos = e.target.open;
       $$('details.temas').forEach((d) => { if (d !== e.target) d.open = e.target.open; });
     }
   }, true);
@@ -589,17 +698,17 @@
     const barra = $('#barra');
     let feitas = 0, total = 1, notaFinal = null;
 
-    if (estado.aba === 'objetivas') {
-      total = OBJ.length;
-      feitas = Object.keys(estado.respostas).length;
+    if (G.aba === 'objetivas') {
+      total = C.OBJ.length;
+      feitas = Object.keys(C.respostas).length;
       const acertos = contarAcertos();
       texto.textContent = `${acertos} acertos · ${feitas}/${total}`;
       if (feitas === total) notaFinal = (acertos / total) * 10;
-    } else if (estado.aba === 'dissertativas') {
-      total = DISS.length;
-      const avaliadas = DISS.filter((d) => estado.diss[d.id].av);
+    } else if (G.aba === 'dissertativas') {
+      total = C.DISS.length;
+      const avaliadas = C.DISS.filter((d) => C.diss[d.id].av);
       feitas = avaliadas.length;
-      const soma = avaliadas.reduce((n, d) => n + PESO[estado.diss[d.id].av], 0);
+      const soma = avaliadas.reduce((n, d) => n + PESO[C.diss[d.id].av], 0);
       texto.textContent = `${fmt(soma)} pts · ${feitas}/${total}`;
       if (feitas === total) notaFinal = (soma / total) * 10;
     } else {
@@ -616,25 +725,25 @@
 
   // ---------- Refazer: zera e sorteia nova ordem das perguntas ----------
   function refazer() {
-    if (estado.aba === 'objetivas') {
-      estado.respostas = {};
+    if (G.aba === 'objetivas') {
+      C.respostas = {};
       embaralharObjetivas();
-      estado.aviso = 'Novo teste: perguntas em nova ordem.';
+      C.aviso = 'Novo teste: perguntas em nova ordem.';
       renderObjetivas();
-      estado.aviso = '';
-    } else if (estado.aba === 'dissertativas') {
-      const temTexto = DISS.some((d) => estado.rascunhos[d.id].trim());
-      if (temTexto && !window.confirm('Apagar suas respostas escritas e a autoavaliação?')) return;
-      DISS.forEach((d) => {
-        estado.diss[d.id] = { revelada: false, pontos: d.pontosChave.map(() => false), av: null };
-        estado.rascunhos[d.id] = '';
-        LS.del(chaveRascunho(d.id));
+      C.aviso = '';
+    } else if (G.aba === 'dissertativas') {
+      const temTexto = C.DISS.some((d) => C.rascunhos[d.id].trim());
+      if (temTexto && !window.confirm(`Apagar suas respostas escritas e a autoavaliação de ${C.M.curto}?`)) return;
+      C.DISS.forEach((d) => {
+        C.diss[d.id] = { revelada: false, pontos: d.pontosChave.map(() => false), av: null };
+        C.rascunhos[d.id] = '';
+        LS.del(C.chave.rascunho(d.id));
       });
       salvarDiss();
       embaralharDissertativas();
-      estado.aviso = 'Novo teste: perguntas em nova ordem.';
+      C.aviso = 'Novo teste: perguntas em nova ordem.';
       renderDissertativas();
-      estado.aviso = '';
+      C.aviso = '';
     }
     atualizarPlacar();
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -644,38 +753,60 @@
   // ---------- Verificação de dados (rode verificarDados() no console) ----------
   function verificarDados() {
     const problemas = [];
-    OBJ.forEach((q) => {
-      const corretas = q.alternativas.filter((a) => a.correta).length;
-      if (corretas !== 1) problemas.push(`Q${q.id}: ${corretas} alternativas corretas`);
-      q.alternativas.forEach((a, i) => {
-        if (!ID_VALIDO.test(a.ancora) || !document.getElementById(a.ancora)) problemas.push(`Q${q.id} ${LETRAS[i]}: âncora quebrada "${a.ancora}"`);
+    const donos = new Map();
+    MATERIAS.forEach((M) => {
+      const X = CONTEXTOS[M.id];
+      X.ids.forEach((id) => {
+        if (donos.has(id)) problemas.push(`Âncora "${id}" repetida em ${donos.get(id)} e ${M.id}`);
+        donos.set(id, M.id);
       });
+      X.OBJ.forEach((q) => {
+        const corretas = q.alternativas.filter((a) => a.correta).length;
+        if (corretas !== 1) problemas.push(`${M.id} Q${q.id}: ${corretas} alternativas corretas`);
+        q.alternativas.forEach((a, i) => {
+          if (!ID_VALIDO.test(a.ancora) || !X.ids.has(a.ancora)) problemas.push(`${M.id} Q${q.id} ${LETRAS[i]}: âncora quebrada "${a.ancora}"`);
+        });
+      });
+      X.DISS.forEach((d) => d.pontosChave.forEach((p, i) => {
+        if (!ID_VALIDO.test(p.ancora) || !X.ids.has(p.ancora)) problemas.push(`${M.id} ${d.id} ponto ${i + 1}: âncora quebrada "${p.ancora}"`);
+      }));
     });
-    DISS.forEach((d) => d.pontosChave.forEach((p, i) => {
-      if (!ID_VALIDO.test(p.ancora) || !document.getElementById(p.ancora)) problemas.push(`${d.id} ponto ${i + 1}: âncora quebrada "${p.ancora}"`);
-    }));
     if (problemas.length) console.warn('Problemas nos dados do quiz:\n' + problemas.join('\n'));
-    else console.info(`Dados OK: ${OBJ.length} objetivas, ${DISS.length} dissertativas, todas as âncoras existem.`);
+    else console.info('Dados OK: ' + MATERIAS.map((M) => `${M.curto} (${CONTEXTOS[M.id].OBJ.length} objetivas, ${CONTEXTOS[M.id].DISS.length} dissertativas)`).join('; ') + '. Todas as âncoras existem.');
     return problemas;
   }
   window.verificarDados = verificarDados;
 
   // ---------- Hash da URL ----------
+  // #ageis, #usabilidade/objetivas, #u-peirce (âncora do resumo) ou vazio (tela inicial).
+  // Os links antigos (#objetivas, #proj-premissa-risco…) continuam abrindo Métodos Ágeis.
   function aplicarHash() {
     let h = '';
     try { h = decodeURIComponent(location.hash.slice(1)); } catch (e) { h = ''; }
-    if (h === 'objetivas' || h === 'dissertativas') { mostrarAba(h); return; }
-    if (h && irParaResumo(h)) return;
-    mostrarAba('resumo');
+    if (!h) { irInicio(); return; }
+
+    const [m, aba] = h.split('/');
+    if (CONTEXTOS[m]) {
+      abrirMateria(m);
+      mostrarAba(ABAS.includes(aba) ? aba : 'resumo');
+      return;
+    }
+    if ((h === 'objetivas' || h === 'dissertativas') && CONTEXTOS.ageis) {
+      abrirMateria('ageis');
+      mostrarAba(h);
+      return;
+    }
+    const dono = MATERIAS.find((M) => CONTEXTOS[M.id].ids.has(h));
+    if (dono) {
+      abrirMateria(dono.id);
+      if (irParaResumo(h)) return;
+    }
+    irInicio();
   }
   window.addEventListener('hashchange', aplicarHash);
   window.addEventListener('resize', medirTopo);
 
   // ---------- Início ----------
-  carregarDiss();
-  carregarOrdem();
-  renderResumo();
-  renderQuestoes();
   verificarDados();
   aplicarHash();
 })();

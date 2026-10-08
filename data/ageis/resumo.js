@@ -1,7 +1,7 @@
 // Resumo: "Conteúdos complementares de Métodos Ágeis" (Aula 05, Prof. Marcos Bussab)
 // Cada bloco e cada seção têm um id usado como âncora pelos links "Ver no resumo".
 // Use "pegadinha" para caixas de destaque.
-window.RESUMO = [
+registrar('ageis', 'resumo', [
   {
     id: "abertura", num: "", titulo: "Abertura",
     secoes: [
@@ -210,4 +210,4 @@ window.RESUMO = [
         html: `<p>As provas exigem menos memorização isolada e mais ligar cada conceito à sua finalidade: a <strong>Crise</strong> explica por que a disciplina evoluiu, o <strong>Scrum</strong> organiza a aprendizagem empírica, o <strong>vocabulário de projetos</strong> melhora o planejamento, as <strong>histórias</strong> aproximam necessidade e conversa e o <strong>RUP</strong> combina iteração e estrutura.</p>` }
     ]
   }
-];
+]);

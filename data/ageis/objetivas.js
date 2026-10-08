@@ -201,10 +201,10 @@
       ["Porque não tem fases.", 0, "O RUP tem quatro fases.", "rup-fases"]]]
   ];
 
-  window.OBJETIVAS = Q.map(([bloco, enunciado, alts], i) => ({
+  registrar('ageis', 'objetivas', Q.map(([bloco, enunciado, alts], i) => ({
     id: i + 1,
     bloco,
     enunciado,
     alternativas: alts.map(([texto, correta, explicacao, ancora]) => ({ texto, correta: !!correta, explicacao, ancora }))
-  }));
+  })));
 })();

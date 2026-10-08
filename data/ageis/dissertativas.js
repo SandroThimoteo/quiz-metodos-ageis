@@ -1,5 +1,5 @@
 // Questões dissertativas: enunciado, resposta modelo e pontos-chave com âncora no resumo.
-window.DISSERTATIVAS = [
+registrar('ageis', 'dissertativas', [
   {
     id: "D1", bloco: "01 · Crise do Software",
     enunciado: "Explique o que foi a Crise do Software e cite duas causas gerenciais e duas causas ligadas aos requisitos.",
@@ -95,4 +95,4 @@ window.DISSERTATIVAS = [
       { texto: "Posição intermediária", ancora: "rup-intermediario" }
     ]
   }
-];
+]);
